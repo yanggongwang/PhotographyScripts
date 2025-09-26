@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🎨 色相环角度记忆游戏</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --fg: #e6e8eb;
+      --muted: #9aa3ad;
+      --accent: #6aa9ff;
+      --ok: #29c46a;
+      --err: #ff5d5d;
+      --card: #12161b;
+      --card-2: #161b22;
+      --border: #1f2630;
+    }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, PingFang SC, Noto Sans CJK SC, "Microsoft YaHei", Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif; background: var(--bg); color: var(--fg); }
+    .wrap { max-width: 900px; margin: 32px auto; padding: 0 16px; }
+    header { display:flex; justify-content: space-between; align-items: center; }
+    .controls { display:flex; gap:8px; align-items:center; }
+    .card { background: linear-gradient(180deg, var(--card), var(--card-2)); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 12px; }
+    .color-block { width: 80px; height: 80px; border-radius: 10px; border:1px solid #0006; box-shadow: inset 0 0 0 1px #ffffff12; }
+    .input { display:flex; gap:10px; margin-top: 10px; }
+    input[type="number"] { background: #0f141a; color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; width: 140px; }
+    .btn { border: 1px solid var(--border); background: #10151b; color: var(--fg); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+    .btn.primary { background: var(--accent); color:#fff; }
+    .feedback { margin-top: 10px; min-height: 28px; }
+    .msg.ok { color: var(--ok); }
+    .msg.err { color: var(--err); }
+    .msg.hint { color: var(--accent); }
+    .meta { margin-top:8px; color: var(--muted); font-size: 13px; display:flex; gap:10px; flex-wrap:wrap; }
+    #legend { display:grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin-top:10px; }
+    #legend.hidden { display:none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🎨 色相环角度记忆游戏</h1>
+      <div class="controls">
+        <label>容差 ±<input id="tol" type="number" min="0" max="30" value="3" style="width:56px">°</label>
+        <button id="btnStart" class="btn primary">开始 / 重开</button>
+        <button id="btnToggleLegend" class="btn">显示/隐藏提示版</button>
+      </div>
+    </header>
+
+    <main class="card">
+      <div style="display:flex; gap:16px; align-items:center;">
+        <div id="block" class="color-block"></div>
+        <div style="flex:1;">
+          <div id="prompt">点击「开始 / 重开」开始一轮训练。</div>
+          <div class="input">
+            <input id="angle" type="number" placeholder="输入角度 0–360" min="0" max="360">
+            <button id="btnSubmit" class="btn">提交 (Enter)</button>
+            <button id="btnHint" class="btn">提示 (?)</button>
+          </div>
+          <div id="feedback" class="feedback"></div>
+          <div class="meta">
+            <div>状态：<span id="status">未开始</span></div>
+            <div>剩余：<span id="left">-</span></div>
+            <div>已见：<span id="seenCount">-</span></div>
+            <div>待巩固：<span id="reinforceCount">-</span></div>
+            <div>用时：<span id="elapsed">0.00s</span></div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <section class="card hidden" id="legend"></section>
+  </div>
+
+  <script>
+    // ===== 数据定义 =====
+    const COLORS = {"红":0,"橙":30,"黄":60,"黄绿":90,"绿":120,"青绿":150,"青":180,"靛":210,"蓝":240,"紫":270,"品红":300,"紫红":330};
+
+    // ===== 工具函数 =====
+    function hsvToRgb(h,s=1,v=1){const c=v*s;const hp=(h%360)/60;const x=c*(1-Math.abs((hp%2)-1));let [r,g,b]=[0,0,0];if(hp<1)[r,g,b]=[c,x,0];else if(hp<2)[r,g,b]=[x,c,0];else if(hp<3)[r,g,b]=[0,c,x];else if(hp<4)[r,g,b]=[0,x,c];else if(hp<5)[r,g,b]=[x,0,c];else [r,g,b]=[c,0,x];const m=v-c;return [r+m,g+m,b+m].map(v=>Math.round(v*255));}
+    function shuffle(arr){for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}return arr;}
+    function clampAngle360(x){const n=Number(x);if(!Number.isFinite(n))return NaN;let m=n%360;if(m<0)m+=360;return m;}
+    function circularDiff(a,b){const d=Math.abs(a-b)%360;return Math.min(d,360-d);}
+    function el(id){return document.getElementById(id);} 
+    function setMsg(type,text){el('feedback').innerHTML=text?`<div class="msg ${type}">${text}</div>`:'';}
+    function setBlockHue(h){const [r,g,b]=hsvToRgb(h,1,1);el('block').style.background=`rgb(${r} ${g} ${b})`;}
+    function renderLegend(){const legend=el('legend');legend.innerHTML='';Object.entries(COLORS).forEach(([name,hue])=>{const [r,g,b]=hsvToRgb(hue);const div=document.createElement('div');div.style.display='flex';div.style.alignItems='center';div.style.gap='8px';div.innerHTML=`<div style=\"width:24px;height:24px;border-radius:6px;background:rgb(${r},${g},${b})\"></div><div>${name} - ${hue}°</div>`;legend.appendChild(div);});}
+
+    // ===== 游戏状态 =====
+    let queue=[], seen=new Set(), reinforce=new Set(), current=null, inRetry=false, startedAt=null;
+    let rafId=null; // ⏱ RAF 计时句柄
+
+    function startTicker(){ stopTicker(); const tick=()=>{updateMeta(); rafId=requestAnimationFrame(tick);} ; rafId=requestAnimationFrame(tick); }
+    function stopTicker(){ if(rafId!==null){ cancelAnimationFrame(rafId); rafId=null; } }
+
+    function reset(){
+      queue=shuffle(Object.entries(COLORS).map(([n,a])=>({name:n,angle:a})));
+      seen.clear(); reinforce.clear(); current=null; inRetry=false; startedAt=performance.now();
+      updateMeta(); nextQuestion(); el('status').textContent='进行中';
+      setMsg('hint','允许误差 ±'+Number(el('tol').value)+'°。');
+      startTicker();
+    }
+
+    function updateMeta(){
+      el('left').textContent=String(queue.length+(current?1:0));
+      el('seenCount').textContent=seen.size;
+      el('reinforceCount').textContent=reinforce.size;
+      if(startedAt){el('elapsed').textContent=((performance.now()-startedAt)/1000).toFixed(2)+'s';}
+    }
+
+    function finish(){
+      stopTicker(); // ✅ 结束时停止计时
+      const elapsed=((performance.now()-startedAt)/1000).toFixed(2);
+      el('prompt').innerHTML='🎉 所有颜色训练完毕，色相记忆巩固完成！用时：<b>'+elapsed+'</b> 秒。';
+      el('status').textContent='已完成';
+      el('block').style.background='#000';
+      setMsg('ok','完成！可点击「开始 / 重开」再来一轮。');
+    }
+
+    function nextQuestion(){
+      if(!queue.length){ finish(); return; }
+      current=queue.shift();
+      setBlockHue(current.angle);
+      el('prompt').textContent='👉『'+current.name+'』的角度是多少？';
+      el('angle').value='';
+      el('angle').focus();
+      updateMeta();
+    }
+
+    // 提交逻辑（含巩固修复）
+    function handleSubmit(){
+      if(!current) return;
+      const tol=Math.max(0,Math.min(30,Number(el('tol').value)||0));
+      const raw=el('angle').value.trim();
+      const num=Number(raw);
+      if(!raw || !Number.isFinite(num)) { setMsg('err','⚠️ 无效输入，请输入 0–360 的数字。'); el('angle').focus(); return; }
+      const user=clampAngle360(num);
+      const diff=circularDiff(user,current.angle);
+
+      if(diff<=tol){
+        if(inRetry){
+          setMsg('ok','✅ 正确！该颜色稍后会再出现一次。');
+          seen.add(current.name);
+          reinforce.add(current.name);
+          queue.push({...current});
+          inRetry=false; current=null; nextQuestion(); return;
+        }
+        if(reinforce.has(current.name)){
+          setMsg('ok','✅ 正确！已进入最后巩固环节（本题不再重复）。');
+          reinforce.delete(current.name);
+        } else if(!seen.has(current.name)){
+          setMsg('ok','✅ 一次就答对，棒！');
+          seen.add(current.name);
+        } else {
+          setMsg('ok','✅ 正确！');
+        }
+        inRetry=false; current=null; nextQuestion(); return;
+      }
+
+      if(!inRetry){
+        setMsg('err',`❌ 错误！再试一次。提示：目标角度约为 <b>${current.angle}°</b>。`);
+        inRetry=true; seen.add(current.name);
+      } else {
+        setMsg('err',`❌ 仍不对，再来。目标角度约为 <b>${current.angle}°</b>。`);
+      }
+      el('angle').focus();
+    }
+
+    function handleHint(){ if(current) setMsg('hint','💡 标准角度：<b>'+current.angle+'°</b>'); }
+
+    // 事件绑定
+    el('btnStart').addEventListener('click',()=>{ reset(); });
+    el('btnSubmit').addEventListener('click',handleSubmit);
+    el('btnHint').addEventListener('click',handleHint);
+    document.addEventListener('keydown',e=>{ if(e.key==='Enter') handleSubmit(); if(e.key==='?') handleHint(); });
+    el('btnToggleLegend').addEventListener('click',()=>{ el('legend').classList.toggle('hidden'); });
+
+    // 初始
+    renderLegend();
+  </script>
